@@ -1,0 +1,803 @@
+clc;
+close all;
+clear all;
+% hold on;
+%digits(64)
+
+ANIMATION=0;
+var_bool=0;
+ERR_PLOT=1;
+EIG_PLOT=0;
+ACT_DATA_PLOT=0;
+NORM_POSITION=0;
+
+SAVE_FIG=1;
+
+Param
+
+
+
+rc_i0=[0;0;1]; % initial position of point C
+
+etac_i0=[0*pi/2;0*pi/4;0*pi+pi/4]; % Eular angles of C w.r.t I [roll, pitch, yaw]
+
+eta_rel0=kron(ones(no_of_links,1),[pi/3;0;0]);
+%eta_rel0(1)=0
+%eta_rel0(2)=pi/3
+%eta_rel0(3)=-pi/100
+%eta_rel0(4)=-pi/4
+vc_i0=[0;0;0]; % initial velocity of point C
+
+etadc_i0=[0;0;0]; % Eular rate of C w.r.t I
+
+etad_rel0=kron(ones(no_of_links,1),[0;0;0]);
+
+
+fx=0.0; fy=0; fz=0; taux=0.0; tauy=0; tauz=0; % forces and torques on auv
+
+tau_rel_link=[0;0;0];
+tau_rel=kron(ones(no_of_links,1),tau_rel_link); % torques on links
+%tau_rel(3*no_of_links-1)=1
+% tau_rel(3)=0;
+% tau_rel(6)=pi/50;
+%Tau_auv=[Rot_tot(etadc_i0)*[fx;fy;fz];Rot_tot(etadc_i0)*[taux;tauy;tauz]];
+Tau_auv=[[fx;fy;fz];[taux;tauy;tauz]];
+Tau=[Tau_auv;tau_rel];
+
+NO_ROLL=0;
+NO_YAW=0;
+NO_CONTROL=0;
+NO_EKF_corr=0;
+q0=[rc_i0;etac_i0;eta_rel0];
+qd0=[vc_i0;etadc_i0;etad_rel0];
+qdd0=zeros(6+3*no_of_links,1);
+q=q0; qdot=qd0; qddot=qdd0;
+
+P_cov=0.1*eye(2*(6+3*no_of_links));
+
+%P_cov=blkdiag(0.001*eye(3),.01*(2/180)*pi*eye(3),.001*(2/180)*pi*eye(3*no_of_links),0.001*eye(3),.00001*(2/180)*pi*eye(3),.00001*(2/180)*pi*eye(3*no_of_links));
+
+
+%Q=0.001*eye(2*(6+3*no_of_links))
+eig_cov=eig(P_cov);
+
+Q=blkdiag(0.001*eye(3),.01*(2/180)*pi*eye(3),.001*(2/180)*pi*eye(3*no_of_links),0.001*eye(3),.00001*(2/180)*pi*eye(3),.00001*(2/180)*pi*eye(3*no_of_links));
+
+X0=[q;qdot];
+X=X0;
+
+qddot_hat=qddot;
+%X0_hat=[q_hat;qdot_hat];
+Xhat0=X0;
+Xhat=Xhat0+sqrt(Q)*randn(2*(6+3*no_of_links),1);
+n=length(Xhat);
+q_hat=Xhat(1:n/2);
+qdot_hat=Xhat(n/2+1:n);
+
+T=.1;
+%samples=1000;
+R_circ=20.;
+v_cruise=0.7;% m/s
+w_circ=+v_cruise/R_circ;
+center=[rc_i0(1) rc_i0(2)+R_circ rc_i0(3)];
+samples=round(2*pi/norm(w_circ)/T)
+samples=10
+
+for i=1:samples
+    t(i)=i*T;
+    
+    pos_des_x(i)= center(1)+R_circ*cos(w_circ*t(i)-pi/2);
+    pos_des_y(i)= center(2)+R_circ*sin(w_circ*t(i)-pi/2);
+    pos_des_z(i)=rc_i0(3);
+    roll_des(i)=etac_i0(1)*0;
+    pitch_des(i)=etac_i0(2)*0;
+    yaw_des(i)=w_circ*t(i)+etac_i0(3);%pi
+    
+    %i
+    if NO_ROLL==1
+        for j=no_of_links-1:-1:0
+            q(7+3*j,i)=0;
+            qdot(7+3*j,i)=0;
+        end
+    end
+    % roll_des(i)
+    % q(4,i)
+    % qdot(4,i)
+    taux=1.02*(roll_des(i)-q(4,i))-1.0*qdot(4,i);
+    % pitch_des(i)
+    % q(5,i)
+    % qdot(5,i)
+    tauy=5*(pitch_des(i)-q(5,i))-20*qdot(5,i);
+    % yaw_des(i)
+    % q(6,i)
+    % qdot(6,i)
+    tauz=5*(yaw_des(i)-q(6,i))-20*qdot(6,i);
+    
+    fx_i=10*(pos_des_x(i)-q(1,i));%-3*qdot(1,i)
+    fy_i=10*(pos_des_y(i)-q(2,i));%-3*qdot(2,i)
+    fz_i=10*(pos_des_z(i)-q(3,i));%-3*qdot(3,i)
+    f_temp=Rot_tot(q(4:6,i))'*[fx_i;fy_i;fz_i];
+    fx=f_temp(1);
+    fy=f_temp(2);
+    fz=f_temp(3);
+    % [fx;fy;fz]=Rot_tot(q(4:6,i))'*[fx_i;fy_i;fz_i]
+    % T_rpy(q(4:6,i))*[taux;tauy;tauz]
+    % T_rpy(q(4:6,i))'*[taux;tauy;tauz]
+    Tau_sol=[taux;tauy;tauz];
+    % Tau_auv=[Rot_tot(q(4:6,i))*[fx;fy;fz];Rot_tot(q(4:6,i))*[taux;tauy;tauz]];%*0+Rot_tot(q(4:6,i))*[0;0;1]]
+    
+    %Tau_auv=[[fx_i;fy_i;fz_i];Rot_tot(q(4:6,i))*[taux;tauy;tauz]];%*0+Rot_tot(q(4:6,i))*[0;0;1]]
+    Tau_auv=[[fx_i;fy_i;fz_i];Tau_sol];%*0+Rot_tot(q(4:6,i))*[0;0;1]]
+    %   T_rpy(q(4:6,i))*[taux;tauy;tauz]]
+    if NO_CONTROL==1
+        Tau_auv=0*Tau_auv;
+    end
+    
+    %Tau_auv=[Rot_tot(q(4:6,i))*[fx;fy;fz];Rot_tot(q(4:6,i))*[taux;tauy;tauz]]
+    Tau=[Tau_auv;tau_rel];
+    
+    %     if t(i)>10
+    %       Tau=0*Tau;
+    %     end
+    
+    %     if i==50
+    %         break;
+    %     end
+    %if t<=100
+    %         ud(5)=pi/10;
+    %     end
+    %     if t>100
+    %         ud(5)=0;
+    %         ud(6)=pi/10;
+    %     end
+    
+    
+    
+    %Real system
+    
+    
+    %     qdot(:,i+1)=qddot(:,i+1)*T+qdot(:,i);
+    %     q(:,i+1)=qdot(:,i+1)*T+q(:,i);
+    %
+    %     X(:,i+1)=[q(:,i+1);qdot(:,i+1)];
+    %     n=length(X(:,i));
+    %
+   % qdot(:,i+1)=qddot(:,i)*T+qdot(:,i); 
+    %q(:,i+1)=q(:,i)+qdot(:,i+1)*T+0*qddot(:,i)*T^2/2;
+   % q(:,i+1)=q(:,i)+qdot(:,i)*T+qddot(:,i)*T^2;
+    
+    
+%    qdot(:,i+1)*T+0*qddot(:,i)*T^2/2;
+
+    %X(:,i+1)=[q(:,i+1);qdot(:,i+1)];
+    
+    % q(:,i)=X(1:n/2,i);
+    % qdot(:,i)=X(n/2+1:n,i);
+    %   
+     qddot(:,i)=dir_dyn(X(1:n/2,i),X(n/2+1:n,i),Tau);   
+     f=[X(n/2+1:n,i)+qddot(:,i)*T;qddot(:,i)];
+     X(:,i+1)=X(:,i)+f*T+sqrt(Q)*randn(n,1)*T;
+     q(:,i+1)=X(1:n/2,i+1);
+     qdot(:,i+1)=X(n/2+1:n,i+1);
+     
+%      size(q(:,i))
+%      size(qdot(:,i))
+%      size(qddot(:,i))
+%      size(q(:,i+1))
+%      size(qdot(:,i+1))
+%      size(qddot(:,i))
+     %X(:,i+1)-X(:,i+1)
+     %+sqrt(Q)*randn(n,1)*T*0;
+%     
+%     q(:,i+1)=X(1:n/2,i+1);
+%     qdot(:,i+1)=X(n/2+1:n,i+1);
+    
+    
+
+
+%     qddot(:,i)=dir_dyn(q(:,i),qdot(:,i),Tau);
+% 
+%   disp('qddot') 
+%     qddot(:,i)'
+%      
+%     qdot(:,i+1)=qddot(:,i)*T+qdot(:,i); 
+%     disp('qdot')  
+%     qdot(:,i+1)'
+%     
+%     q(:,i+1)=q(:,i)+qdot(:,i+1)*T+0*qddot(:,i)*T^2/2;
+%     disp('q') 
+%     q(:,i+1)'
+%     
+%     X(:,i+1)=[q(:,i+1);qdot(:,i+1)];
+
+    
+    
+%     qddot(:,i+1)=dir_dyn(X(1:n/2,i),X(n/2+1:n,i),Tau);
+%     %     qdot(:,i+1)=qddot(:,i+1)*T+qdot(:,i);
+%     %     q(:,i+1)=qdot(:,i+1)*T+q(:,i);
+%     %
+%     %     X(:,i+1)=[q(:,i+1);qdot(:,i+1)];
+%     %     n=length(X(:,i));
+%     %
+%     f=[qdot(:,i);qddot(:,i+1)];
+%     X(:,i+1)=X(:,i)+f*T+sqrt(Q)*randn(n,1)*T;
+%     
+%     q(:,i+1)=X(1:n/2,i+1);
+%     qdot(:,i+1)=X(n/2+1:n,i+1);
+    
+    
+    
+    
+    
+    
+    %     disp('X real')
+    %      X(:,i+1)
+    %y_m=output(X(:,i))+nois
+    
+    %%EKF
+    %     x_hat_k_1_k_1
+    %     f_hat=[x_hat_k_1_k_1(6+3*no_link+1:2*(6+3*no_link),i);dir_dyn(x_hat_k_1_k_1(1:(6+3*no_link),i),x_hat_k_1_k_1(6+3*no_link+1:2*(6+3*no_link),i),Tau)];
+    %     F_k_1=Jac(f_hat)
+    %     P_k_k_1
+    %
+    %     x_hat_k_k_1
+    %
+    %     x_hat_k_k
+    
+    
+    %     X(:,i)=[q(:,i);qdot(:,i)];
+    %     n=length(X(:,i));
+    %
+    %     f=[qdot(:,i);qddot(:,i+1)];
+    %     X(:,i+1)=X(:,i)+f*T+sqrt(Q)*randn(n,1)*T;
+    %     q(:,i+1)=X(1:n/2,i+1);
+    %     qdot(:,i+1)=X(n/2+1:n,i+1);
+    
+    
+    if NO_EKF_corr==0
+        
+        
+        % Xhat(n/2+1:n,i+1)
+%         qddot_hat(:,i+1)=dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau);
+%         f_hat=[Xhat(n/2+1:n,i);qddot_hat(:,i+1)];
+%         %Xhat(1:n/2,i+1)=Xhat(n/2+1:n,i+1)*T+Xhat(1:n/2,i);
+%         Xhat(:,i+1)=Xhat(:,i)+f_hat*T;
+%         
+        
+         qddot_hat(:,i)=dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau);   
+     f_hat=[Xhat(n/2+1:n,i)+qddot_hat(:,i)*T;qddot_hat(:,i)];
+     Xhat(:,i+1)=Xhat(:,i)+f_hat*T;
+     q_hat(:,i+1)=Xhat(1:n/2,i+1);
+     qdot_hat(:,i+1)=Xhat(n/2+1:n,i+1);
+        
+        %fXhat=Xhat(1:n,i+1);
+        
+        % disp('Xhat predicted')
+        %     Xhat(:,i+1)=Xhat(:,i)+fXhat*T;
+        %     disp('Xhat predicted')
+        %     Xhat(:,i+1)
+        %     F=[];
+        %     for ii=1:n%2*(6+3*no_of_links)
+        %         perturbation=zeros(n,1);
+        %         perturbation(ii)=eps;
+        %        % Xperturbed=Xhat(:,i);
+        %        % Xperturbed(ii)=Xperturbed(ii)+eps;
+        % %         [Xhat(n/2+1:n,i);dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau)]
+        % %         perturbation
+        % %         fXhat
+        %         F(:,ii)=([Xhat(n/2+1:n,i);dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau)]+perturbation-fXhat)/eps;
+        %      %   F(:,ii)=([Xperturbed(n/2+1:n);dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau)]-fXhat)/eps
+        %         % Xperturbed(ii)=Xhat(ii,i);
+        %     end
+        delta=0.00001;
+        
+        for ii=1:n%2*(6+3*no_of_links)
+            Xperturbed=Xhat(:,i);
+            Xperturbed(ii)=Xperturbed(ii)+delta;
+            %  (Xperturbed-Xhat(:,i))'
+            %erm2=dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau);
+            %term1=term2*T+Xperturbed(1:n/2);
+            %term1=Xperturbed(n/2+1:n);
+            %[Xperturbed(n/2+1:n);dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau)]
+            %[Xhat(n/2+1:n,i);dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau)]
+            %[Xperturbed(n/2+1:n);dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau)]-[Xhat(n/2+1:n,i);dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau)]
+            
+            %f_hat
+            
+            qddot_pert=dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau);   
+            f_pert=[Xperturbed(n/2+1:n)+qddot_pert*T;qddot_pert];
+            
+            F(:,ii)=f_pert-f_hat;
+            
+            % F(:,ii)=([Xperturbed(n/2+1:n);dir_dyn(Xperturbed(1:n/2),Xperturbed(n/2+1:n),Tau)]-[Xhat(n/2+1:n,i);dir_dyn(Xhat(1:n/2,i),Xhat(n/2+1:n,i),Tau)])/delta;
+            % Xperturbed(ii)=Xhat(ii,i);
+        end
+        disp('Jacobian F')
+        F
+        % disp('covarince predicted')
+        %F
+        F*P_cov*F'
+        Q
+        P_cov=F*P_cov*F'+Q
+        %Y=op_noise(X(1:n/2,i),X(n/2+1:n,i));
+        %size(Y)
+        %         H=[]
+        %
+        %         for ii=1:n
+        %             perturbation=zeros(n,1);
+        %            perturbation(ii)=eps;
+        %             Xperturbed=Xhat(:,i+1);
+        %             Xperturbed(ii)=Xperturbed(ii)+eps;
+        %             H(:,ii)=(op_func(Xperturbed(1:n/2),Xperturbed(n/2+1:n))-op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1)))/eps;
+        %             % Xperturbed(ii)=Xhat(ii,i+1);
+        %         end
+        delta=0.00001;
+        for ii=1:n
+            %ii
+            Xperturbed=Xhat(:,i+1);
+            Xperturbed(ii)=Xperturbed(ii)+delta;
+            %(op_func(Xperturbed(1:n/2),Xperturbed(n/2+1:n))-op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1)))
+            %op_func(Xperturbed(1:n/2),Xperturbed(n/2+1:n))
+            %-op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1))
+            
+            H(:,ii)=(op_func(Xperturbed(1:n/2),Xperturbed(n/2+1:n))-op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1)))/delta;
+            % Xperturbed(ii)=Xhat(ii,i+1);
+        end
+        H
+        Rv=op_noise_cov(X(1:n/2,i));
+        
+        disp('output noise cov mat')
+        
+        %     size(P_cov*H')
+        %     size(H*P_cov*H')
+        %     size(Rv)
+        % H*P_cov*H'+Rv
+        
+        K=P_cov*H'*inv(H*P_cov*H'+Rv);
+        disp('measured output')
+        op_noise(X(1:n/2,i+1),X(n/2+1:n,i+1))
+        disp('estimatedoutput')
+        op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1))
+        disp('delta_y')
+        delta_y=op_noise(X(1:n/2,i+1),X(n/2+1:n,i+1))-op_func(Xhat(1:n/2,i+1),Xhat(n/2+1:n,i+1));
+        %size(K)
+        %size(y)
+        
+        Xhat(:,i+1)=Xhat(:,i+1)+K*delta_y;
+        disp('Xhat corrected')
+        Xhat(:,i+1)
+        disp('X-Xhat corrected')
+        X(:,i+1)-Xhat(:,i+1)
+        P_cov=(eye(2*(6+3*no_of_links))-K*H)*P_cov
+        
+        
+        q_hat(:,i+1)=Xhat(1:n/2,i+1);
+        qdot_hat(:,i+1)=Xhat(n/2+1:n,i+1);
+        i
+        eig_cov(:,i+1)=eig(P_cov);
+    end
+    if NO_ROLL==1
+        for j=no_of_links-1:-1:0
+            q(7+3*j,i)=0;
+            qdot(7+3*j,i)=0;
+            qddot(7+3*j,i)=0;
+        end
+    end
+    %disp('tau_sol')
+    %Tau_sol'
+    %disp('tau_i')
+    %Tau'
+    
+    %disp('qddot')
+    %qddot(:,i)'
+    
+    %qdot(:,i+1)=qddot(:,i)*T+qdot(:,i);
+    
+    %disp('qdot')
+    %qdot(:,i+1)'
+    
+    %q(:,i+1)=q(:,i)+qdot(:,i+1)*T+0*qddot(:,i)*T^2/2;
+    
+    %disp('q')
+    %q(:,i+1)'
+    
+    % y(:,i+1)=op_func(q(:,i),qdot(1:6,i));
+    
+    %     for j=no_of_links-1:no_of_links-1
+    %     q(7+3*j,i+1)=0;
+    %     qdot(7+3*j,i+1)=0;
+    %     end
+    
+    [r,R]=pos_rot_pnts(q(1:6+3*no_of_links,i));
+    if ANIMATION==1
+        cla
+        hold on
+        [P_draw,R_draw,V_draw,W_draw,Vd_draw,Wd_draw]=acc_angacc(q(:,i),qdot(:,i),qddot(:,i));
+        eularAng=rad2deg(Eular_ang(R_draw(:,:,1))');
+        %drawEllipsoid([r(:,1)' 1 .5 .5 eularAng(3) eularAng(2) eularAng(1)]);
+        drawEllipsoid([P_draw(:,1)' 1 .25 .25 eularAng(3) eularAng(2) eularAng(1)]);
+        
+        [P_draw_hat,R_draw_hat,V_draw_hat,W_draw_hat,Vd_draw_hat,Wd_draw_hat]=acc_angacc(q_hat(:,i),qdot_hat(:,i),qddot_hat(:,i));
+        
+        
+        DrawPlot(P_draw,R_draw,0)
+        
+        DrawPlot(P_draw_hat,R_draw_hat,1)
+        
+        %DrawPlot(r,R)
+        hold off
+        
+        
+        % axis([-3 3 -3 3 -3 3])
+        % axis([-2 2 -2 2 -2 2])
+        %
+        axis([-10 10 -10 10 -10 10])
+        %
+        %axis square
+        %         axis equal
+        %         axis([-50 50 -50 50 -50 50])
+        
+        %        axis([-30 30 -30 30 -30 30])
+        %  axis([-15 5 -5 5 0 5])
+        set(gca, 'XDir', 'reverse')
+        set(gca, 'ZDir', 'reverse')
+        title(sprintf('t: %0.2f sec', t(i)));
+        grid on
+        %drawnow
+        % view([0,90])
+        %hold on;
+        %if i==1
+        pause(.1)
+        %end
+        %         if i==20
+        %             break;
+        %         end
+    end
+    
+    if NORM_POSITION==1
+        [P_draw,R_draw,V_draw,W_draw,Vd_draw,Wd_draw]=acc_angacc(q(:,i),qdot(:,i),qddot(:,i));
+        [P_draw_hat,R_draw_hat,V_draw_hat,W_draw_hat,Vd_draw_hat,Wd_draw_hat]=acc_angacc(q_hat(:,i),qdot_hat(:,i),qddot_hat(:,i));
+        for k=1:no_of_links
+            errn_link(k,:)=norm(P_draw(4+3*(k-1):3+3*k)-P_draw_hat(4+3*(k-1):3+3*k));
+        end
+        pos_hyd_errnrm(:,i)=errn_link;
+    end
+    
+end
+
+Xe=abs(X-Xhat);
+
+save('auvstreamerData.mat','eig_cov','X','Xhat','Xe')
+
+[row,col]=size(eig_cov);
+if EIG_PLOT==1
+    figure
+    plot(t,eig_cov(1:row,1:col-1),'LineWidth',2);
+    xlabel('t [s]','FontSize',12);
+    ylabel('Eigen Values','FontSize',12);
+    set(gca,'fontsize',12)
+    %legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'eigenval.jpg')
+        saveas(gcf,'eigenval','epsc')
+        cd ..
+    end
+%     figure
+%     plot(t,eig_cov(row/2+1:row,1:col-1));
+%     xlabel('t [s]');
+%     ylabel('Eigen Values');
+%     if SAVE_FIG==1
+%         cd img
+%         saveas(gcf,'err_auv_pos_vel.jpg')
+%         cd ..
+%     end
+end
+
+if ERR_PLOT==1
+    
+    %% error plot
+    
+    
+    [row,col]=size(Xe);
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,Xe(1:3,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\tilde{\mathbf{r}}_C^i \ [m]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,Xe(row/2+1:row/2+1+2,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\tilde{\mathbf{v}}_C^i \ [m/s]$','Interpreter','LaTex','FontSize',16);
+    %ylabel('AUV Centroid: velocity error [m]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'err_auv_pos_vel.jpg')
+        saveas(gcf,'err_auv_pos_vel','epsc')
+        cd ..
+    end
+    
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,Xe(4:6,1:col-1),'LineWidth',2)
+    legend(thisax,{'$\tilde{\phi}_c^i$','$\tilde{\theta}_c^i$','$\tilde{\psi}_c^i$'}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\tilde{\eta}_c^i \ [rad]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,Xe(row/2+1+3:row/2+1+5,1:col-1),'LineWidth',2)
+    legend(thisax,{'$\dot{\tilde{\phi}}_c^i$','$\dot{\tilde{\theta}}_c^i$','$\dot{\tilde{\psi}}_c^i$'}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\dot{\tilde{\eta}}_c^i \ [rad/s]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'err_auv_ang_angr.jpg')
+        saveas(gcf,'err_auv_ang_angr','epsc')
+        cd ..
+    end
+    
+    if no_of_links>0
+        for i=1:no_of_links
+            figure
+            thisax = subplot(2,1,1);
+            
+            plot(t,Xe(7+3*(i-1):6+3*i,1:col-1),'LineWidth',2)
+            legend(thisax,{['$\tilde{\phi}_' num2str(i) '^' num2str(i-1) '$'],['$\tilde{\theta}_' num2str(i) '^' num2str(i-1) '$'],['$\tilde{\psi}_' num2str(i) '^' num2str(i-1) '$']}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['$\tilde{\eta}_' num2str(i) '^' num2str(i-1) ' \ [rad]$'], 'Interpreter','LaTex','FontSize',16);
+            set(gca,'fontsize',12)
+            
+            
+            thisax = subplot(2,1,2);
+            plot(t,Xe((row/2+1+3*(i-1)):(row/2+3*i),1:col-1),'LineWidth',2)
+            legend(thisax,{['$\dot{\tilde{\phi}}_' num2str(i) '^' num2str(i-1) '$'],['$\dot{\tilde{\theta}}_' num2str(i) '^' num2str(i-1) '$'],['$\dot{\tilde{\psi}}_' num2str(i) '^' num2str(i-1) '$']}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['$\dot{\tilde{\eta}}_' num2str(i) '^' num2str(i-1) ' \ [rad/s]$'], 'Interpreter','LaTex','FontSize',16);
+            set(gca,'fontsize',12)
+            
+            if SAVE_FIG==1
+                cd img
+                saveas(gcf,['err_Link' num2str(i) '_ang_angr.jpg'])
+                saveas(gcf,['err_Link' num2str(i) '_ang_angr'],'epsc')
+                cd ..
+            end
+        end
+    end
+    
+    %% plot of actual and estimateds data
+    [row,col]=size(X);
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(1:3,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\mathbf{r}_C^i \ [m]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,Xhat(1:3,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\hat{\mathbf{r}}_C^i \ [m]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'auv_pos_act_est.jpg')
+        saveas(gcf,'auv_pos_act_est','epsc')
+        cd ..
+    end
+    
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(row/2+1:row/2+1+2,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\mathbf{v}_C^i \ [m/s]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,Xhat(row/2+1:row/2+1+2,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\hat{\mathbf{v}}_C^i \ [m/s]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'auv_vel_act_est.jpg')
+        saveas(gcf,'auv_vel_act_est','epsc')
+        cd ..
+    end
+    
+    
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(4:6,1:col-1),'LineWidth',2)
+    legend(thisax,{'$\phi_c^i$','$\theta_c^i$','$\psi_c^i$'}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\eta_c^i \ [rad]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    thisax = subplot(2,1,2);
+    plot(t,Xhat(4:6,1:col-1),'LineWidth',2)
+    legend(thisax,{'$\hat{\phi}_c^i$','$\hat{\theta}_c^i$','$\hat{\psi}_c^i$'}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\hat{\eta}_c^i \ [rad]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'auv_ang_act_est.jpg')
+        saveas(gcf,'auv_ang_act_est','epsc')
+        cd ..
+    end
+    
+    
+    if no_of_links>0
+        for i=1:no_of_links
+            figure
+            thisax = subplot(2,1,1);
+            
+            plot(t,X(7+3*(i-1):6+3*i,1:col-1),'LineWidth',2)
+            legend(thisax,{['$\phi_' num2str(i) '^' num2str(i-1) '$'],['$\theta_' num2str(i) '^' num2str(i-1) '$'],['$\psi_' num2str(i) '^' num2str(i-1) '$']}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['$\eta_' num2str(i) '^' num2str(i-1) ' \ [rad]$'], 'Interpreter','LaTex','FontSize',16);
+            set(gca,'fontsize',12)
+            
+            thisax = subplot(2,1,2);
+            
+            plot(t,Xhat(7+3*(i-1):6+3*i,1:col-1),'LineWidth',2)
+            legend(thisax,{['$\hat{\phi}_' num2str(i) '^' num2str(i-1) '$'],['$\hat{\theta}_' num2str(i) '^' num2str(i-1) '$'],['$\hat{\psi}_' num2str(i) '^' num2str(i-1) '$']}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['$\hat{\eta}_' num2str(i) '^' num2str(i-1) ' \ [rad]$'], 'Interpreter','LaTex','FontSize',16);
+            set(gca,'fontsize',12)
+            
+            if SAVE_FIG==1
+                cd img
+                saveas(gcf,['Link ' num2str(i) 'ang_act_est.jpg'])
+                saveas(gcf,['Link ' num2str(i) 'ang_act_est'],'epsc')
+                cd ..
+            end
+            
+        end
+    end
+    
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(row/2+1+3:row/2+1+5,1:col-1),'LineWidth',2)
+    legend(thisax,{'$\dot{\phi}_c^i$','$\dot{\theta}_c^i$','$\dot{\psi}_c^i$'}, 'Interpreter', 'LaTex','FontSize',16, 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('$\dot{\tilde{\eta}}_c^i \ [rad/s]$','Interpreter','LaTex','FontSize',16);
+    set(gca,'fontsize',12)
+    thisax = subplot(2,1,2);
+    plot(t,Xhat(row/2+1+3:row/2+1+5,1:col-1),'LineWidth',2)
+    legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('AUV: Estimated Eular Rate [rad/sec]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'auv_angr_act_est.jpg')
+        saveas(gcf,'auv_angr_act_est','epsc')
+        cd ..
+    end
+    
+    if no_of_links>0
+        for i=1:no_of_links
+            figure
+            thisax = subplot(2,1,1);
+            plot(t,X((row/2+1+3*(i-1)):(row/2+3*i),1:col-1),'LineWidth',2)
+            legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['Link ' num2str(i) ': Actual Relative Eular Rate [rad/sec]'],'FontSize',12);
+            set(gca,'fontsize',12)
+            
+            thisax = subplot(2,1,2);
+            plot(t,Xhat((row/2+1+3*(i-1)):(row/2+3*i),1:col-1),'LineWidth',2)
+            legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['Link ' num2str(i) ': Estimated Relative Eular Rate [rad/sec]'],'FontSize',12);
+            set(gca,'fontsize',12)
+            
+            if SAVE_FIG==1
+                cd img
+                saveas(gcf,['Link ' num2str(i) '_ang_act_est.jpg'])
+                saveas(gcf,['Link ' num2str(i) '_ang_act_est'],'epsc')
+                cd ..
+            end
+            
+        end
+    end
+    
+    
+end
+if ACT_DATA_PLOT==1
+        %% plot of actual data
+    
+    
+    [row,col]=size(X);
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(1:3,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('AUV Centroid: actual position [m]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,X(row/2+1:row/2+1+2,1:col-1),'LineWidth',2)
+    legend(thisax,'X-dir','Y-dir','Z-dir', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('AUV Centroid: actual velocity [m]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    
+    figure
+    thisax = subplot(2,1,1);
+    plot(t,X(4:6,1:col-1),'LineWidth',2)
+    legend('Roll','Pitch','Yaw', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('AUV: actual Eular Angles [rad]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    thisax = subplot(2,1,2);
+    plot(t,X(row/2+1+3:row/2+1+5,1:col-1),'LineWidth',2)
+    legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('AUV: actual Eular Rate [rad/sec]','FontSize',12);
+    set(gca,'fontsize',12)
+    
+    if no_of_links>0
+        for i=1:no_of_links
+            figure
+            thisax = subplot(2,1,1);
+    
+            plot(t,X(7+3*(i-1):6+3*i,1:col-1),'LineWidth',2)
+            legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['Link ' num2str(i) ': actual Relative Eular Angles [rad]'],'FontSize',12);
+            set(gca,'fontsize',12)
+            
+            thisax = subplot(2,1,2);
+            plot(t,X((row/2+1+3*(i-1)):(row/2+3*i),1:col-1),'LineWidth',2)
+            legend(thisax,'Roll','Pitch','Yaw', 'location', 'northeast')
+            xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+            ylabel(['Link ' num2str(i) ': actual Relative Eular Rate [rad/sec]'],'FontSize',12);
+            set(gca,'fontsize',12)
+        end
+    end 
+end
+
+if NORM_POSITION==1
+    figure
+    plot(t,pos_hyd_errnrm)
+    xlabel('$t [s]$','Interpreter','LaTex','FontSize',16);
+    ylabel('error norm [m]','FontSize',12);
+    str=[];
+    for i=1:no_of_links
+        str=[str,cellstr(char(strcat('Link ',num2str(i))))];
+    end
+    legend(str)
+    set(gca,'fontsize',12)
+    
+    if SAVE_FIG==1
+        cd img
+        saveas(gcf,'errnorm.jpg')
+        saveas(gcf,'errnorm','epsc')
+        cd ..
+    end
+end
+
+if var_bool==1
+    plotofdata(q,qdot,qddot,samples,t);
+end

@@ -1,0 +1,185 @@
+%% This function calculates the forces and the torques of the origin of
+%% all the frames given the states (auv position, orientation, eular angles
+%% and all of their [aforementioned states] single and double derivatives respectively)
+%% Function Arguments:
+%% q=states (auv position, orientation,eular angles
+%% qdot=derivative of q
+%% qddot=derivative of qdot
+%% and all of their [aforementioned states] single and double derivatives respectively)
+%% Function Returns:
+%% T=actuation force on auv and interaction forces of all the origins of the frames
+%% Tau=actuation torqe on the auv and the other frames
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function [T,Tau]=force_torque(q,qdot,qddot,plot_var)
+
+global r_PC_p;
+global r_CB_c
+global g;
+global rpipi_1_pi;
+global rpici_pi;
+global rpibi_pi;
+global no_of_links;
+%global m_links;
+global m_link_ind;
+global I_links;
+global buoyancy_max_link
+global m_auv;
+global I_auv;
+
+global density_w;
+global buoyancy_max_auv;
+
+global surf_area_auv_front;
+global surf_area_auv_side;
+global surf_area_link_front;
+global surf_area_link_side;
+
+global fric_coeff;
+global drag_coeff;
+global lift_coeff;
+global drag_coeff_link;
+global lift_coeff_link;
+global fric_coeff_link;
+
+global water_speed;
+
+DRAG=1;
+DRAG1=0;
+
+[P,R,V,W,Vd,Wd]=acc_angacc(q,qdot,qddot); % linear and angular position, velocity, accelerations of all the frames
+
+
+
+T=[];
+Tau=[];
+
+
+T_pi_i=[0;0;0]; % interaction force of the last link
+T_pi_1_i=[0;0;0];
+Tau_pi_i=[0;0;0]; % interaction torque of the last link
+Tau_pi_1_i=[0;0;0];
+for i=no_of_links:-1:1
+   
+    R_pi_i=R(:,:,2+i); % Rotation matrix of the current frame
+    R_pi_1_i=R(:,:,2+i-1); % Rotation matrix of the previous frame
+    
+    x_cap_pi_i=R_pi_i(:,1); % unit vector in the axial direction
+    
+    v_rel_pi_i=-water_speed+V(:,2+i);
+    v_ax_pi_i=dot(x_cap_pi_i,v_rel_pi_i)*x_cap_pi_i; %
+    v_or_pi_i=v_rel_pi_i-v_ax_pi_i;
+    
+    
+    fdrag_pi_i=(-fric_coeff_link*v_ax_pi_i-0.5*density_w*norm(v_or_pi_i)*v_or_pi_i*surf_area_link_side*lift_coeff_link...
+        -0.5*density_w*norm(v_ax_pi_i)*v_ax_pi_i*surf_area_link_front*drag_coeff_link);
+    
+    Taudrag_pi_i=-0.02*W(:,2+i)*norm(W(:,2+i))*0;
+    
+    
+    if plot_var==1
+        disp('fdrag_pi_i')
+        fdrag_pi_i
+        disp('Taudrag_pi_i')
+        Taudrag_pi_i
+    end
+    % V_curr(:,1)=V(:,2+i); % linear velocity of the next frame
+    W_pi_i(:,1)=W(:,2+i)'; % angular velocity of the next frame
+    Vd_pi_i(:,1)=Vd(:,2+i)'; % linear acceleration of the next frame
+    Wd_pi_i(:,1)=Wd(:,2+i)'; % angular acceleration of the next frame
+    m_curr=m_link_ind; % mass of the current link
+    
+    Somegad=Smtrx(Wd_pi_i); % S matrix for angular acceleration
+    Somega=Smtrx(W_pi_i); % S matrix for angular speed
+    
+    
+    fb_pi_i=-buoyancy_max_link*g;
+    fg_pi_i=m_curr*g;
+    
+    
+    rcipi_i=-R_pi_i*rpici_pi(:,i); % distance between the centroid and the trailing frame of the current link
+    
+    
+    T_pi_1_i=T_pi_i+fdrag_pi_i+fb_pi_i+fg_pi_i-m_curr*(Vd_pi_i-Smtrx(-rcipi_i)*Wd_pi_i+Somega^2*(-rcipi_i));% interaction force with the prev link
+    
+    %I_curr=R_curr*(I_links(:,:,i)+m_curr*norm(rpipi_1_pi(i,:)'))*R_curr'; % inertia matrix of the current link w.r.t inertial frame
+    I_pi_i=R_pi_i*(I_links(:,:,i)-m_curr*Smtrx(rpici_pi(:,i))*Smtrx(rpici_pi(:,i)))*R_pi_i'; % inertia matrix of the current link w.r.t inertial frame
+    %%%%%%%%% - I_auv_act=R(:,:,1)*I_auv*R(:,:,1)'
+    rpi_1pi_i=-R_pi_i*rpipi_1_pi(:,i); % distance between two frames of the current link
+    rpipi_1_i=R_pi_i*rpipi_1_pi(:,i); % distance between two frames of the current link
+    rpici_i=R_pi_i*rpici_pi(:,i); % distance between the trailing frame to the centroid of the current link
+    rpibi_i=R_pi_i*rpibi_pi(:,i); % distance between the buoyancy point and the trailing frame of the current link
+    
+    Tau_pi_1_i=Tau_pi_i+Taudrag_pi_i+cross(rpibi_i,fb_pi_i)+cross(rpipi_1_i,-T_pi_1_i)...
+        +cross(rpici_i,fg_pi_i)+cross(rpici_i,fdrag_pi_i)-(m_curr*Smtrx(-rcipi_i)*Vd_pi_i+I_pi_i*Wd_pi_i+Somega*I_pi_i*W_pi_i); % interaction torque with the previous link
+    
+    T=[R_pi_1_i'*T_pi_1_i T];
+    Tau=[R_pi_1_i'*Tau_pi_1_i Tau];
+    
+    T_pi_i=T_pi_1_i;
+    Tau_pi_i=Tau_pi_1_i;
+    
+end
+
+
+
+Rc=R(:,:,1);
+x_cap=Rc(:,1);
+
+v_rel=-water_speed+V(:,1);
+v_ax=dot(x_cap,v_rel)*x_cap;
+v_or=v_rel-v_ax;
+
+fdrag=(-fric_coeff*v_ax-0.5*density_w*norm(v_ax)*v_ax*surf_area_auv_front*drag_coeff...
+    -0.5*density_w*norm(v_or)*v_or*surf_area_auv_side*lift_coeff);
+
+
+Tau_drag=-1*W(:,1)*norm(W(:,1))*0;
+
+
+if plot_var==1
+    disp('fdrag')
+    fdrag
+    disp('Tau_drag')
+    Tau_drag
+end
+fb=-buoyancy_max_auv*g;
+fg=m_auv*g;
+
+
+% gravitational force acting on the auv
+f_act_i=m_auv*(Vd(:,1))-fdrag-fb-fg-T_pi_1_i; % actuation force required for the auv
+
+
+%Tau_drag=[0;0;0]; % drag torque acting on the auv
+r_CP_i=-R(:,:,2)*r_PC_p; % diatance becteen the centroid and point of attachment of the cable
+r_CB_i=R(:,:,1)*r_CB_c; % distance between the centroid and the point of buoyancy
+% I_auv
+I_auv_act=R(:,:,1)*I_auv*R(:,:,1)'; % Inertia with respect to inertial frame
+
+
+Tau_act_i=(I_auv_act*Wd(:,1)+Smtrx(W(:,1))*I_auv_act*W(:,1))-Tau_drag-Tau_pi_1_i-cross(r_CB_i,fb)-cross(r_CP_i,T_pi_1_i); % actuation torque required for the auv
+
+T=[f_act_i -T];
+Tau=[Rc'*Tau_act_i -Tau];
+
+if plot_var
+    disp('T')
+    T
+    disp('Tau')
+    Tau
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
